@@ -241,7 +241,7 @@ body.authed #auth-gate { display: none; }
       <input id="auth-pass2" type="password" autocomplete="new-password" minlength="8"></div>
       <button id="auth-submit" type="submit">Sign in</button>
     </form>
-    <a href="#" id="auth-forgot" class="auth-link">Forgot password?</a>
+    <a href="#" id="auth-forgot" class="auth-link">Forgot password?</a> <a href="#" id="auth-cancel" class="auth-link" hidden>Back to the book</a>
     <p id="auth-msg" class="auth-msg" aria-live="polite"></p>
     <p class="auth-fine">Your comments are saved to your account, so you see them again from any browser.</p>
   </div>
@@ -251,7 +251,7 @@ body.authed #auth-gate { display: none; }
     <span class="t">The Agent Scorecard — Review</span>
     <span class="count" id="count">0 comments</span>
     <span class="sp"></span>
-    <span id="sync-status" class="sync-status"></span><span id="auth-user" class="auth-user"></span><button id="signout">Sign out</button>
+    <span id="sync-status" class="sync-status"></span><span id="auth-user" class="auth-user"></span><button id="chpass">Change password</button><button id="signout">Sign out</button>
     <button id="toggleResolved">Hide resolved</button>
     <button id="copyBtn">Copy all</button>
     
@@ -641,6 +641,11 @@ window.ASR_BOOT=function(){
     $('auth-email-row').hidden = m === 'newpass';
     $('auth-pass-row').hidden = m === 'reset';
     $('auth-pass2-row').hidden = !(m === 'signup' || m === 'newpass');
+    // hidden inputs must not be required, or the browser silently blocks the submit
+    $('auth-email').required = m !== 'newpass';
+    $('auth-pass').required = m !== 'reset';
+    $('auth-pass2').required = m === 'signup' || m === 'newpass';
+    $('auth-cancel').hidden = !(m === 'newpass' && booted);
     $('auth-pass').autocomplete = m === 'signin' ? 'current-password' : 'new-password';
     $('auth-pass').placeholder = m === 'signin' ? '' : 'At least 8 characters';
     $('auth-submit').textContent = LABEL[m];
@@ -670,7 +675,11 @@ window.ASR_BOOT=function(){
       if (!error) say('If that email has an account, a reset link is on its way. Open it in this browser.', 'ok');
     } else if (mode === 'newpass') {
       ({ error } = await sb.auth.updateUser({ password }));
-      if (!error) { await sb.auth.signOut({ scope: 'others' }); recovering = false; const { data } = await sb.auth.getSession(); start(data.session); }
+      if (!error) {
+        await sb.auth.signOut({ scope: 'others' }); recovering = false;
+        if (booted) { document.body.classList.add('authed'); status('Password saved'); }
+        else { const { data } = await sb.auth.getSession(); start(data.session); }
+      }
     }
     $('auth-submit').disabled = false;
     if (error) say(friendly(error.message), 'err');
@@ -721,6 +730,8 @@ window.ASR_BOOT=function(){
   function status(t, bad) { const el = $('sync-status'); if (el) { el.textContent = t; el.style.color = bad ? '#b42318' : ''; } }
   window.addEventListener('beforeunload', (e) => { if (pending) { flush(); e.preventDefault(); } });
 
+  $('chpass').addEventListener('click', () => { $('auth-pass').value = $('auth-pass2').value = ''; setMode('newpass'); document.body.classList.remove('authed'); gate.classList.remove('loading'); });
+  $('auth-cancel').addEventListener('click', (e) => { e.preventDefault(); document.body.classList.add('authed'); setMode('signin'); });
   $('signout').addEventListener('click', async () => {
     if (pending) await flush();
     await sb.auth.signOut();
