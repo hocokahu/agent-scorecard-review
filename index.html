@@ -193,6 +193,12 @@
 @media (hover:none){#content .hanchor{opacity:.45}}
 #asr-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(10px);background:#262d65;color:#fff;font:600 13px "Source Sans 3",system-ui,sans-serif;padding:8px 14px;opacity:0;pointer-events:none;transition:all .15s;z-index:2000}
 #asr-toast.on{opacity:1;transform:translateX(-50%)}
+.bar select#ver{font:600 12.5px "Source Sans 3",system-ui,sans-serif;padding:5px 8px;border:1px solid #c7ccdd;background:#fff;color:#262d65;margin-right:8px;cursor:pointer}
+  .bar .vernote,.bar select#ver,.bar .auth-user,.bar button{white-space:nowrap}
+.bar .vernote{font:600 12px "Source Sans 3",system-ui,sans-serif;background:#fff6dc;color:#8a5a00;border:1px solid #f0d68f;padding:4px 8px;margin-right:8px}
+.bar .vernote a{color:#262d65;margin-left:4px}
+body.readonly #clearBtn,body.readonly #chpass{display:none}
+.card .meta .rtag{font-weight:600;color:#9a9a9a}.card .meta .rtag.on{color:#1f7a45}
 /* sign-in gate (injected by build/build_site.py) */
 body:not(.authed) > .bar, body:not(.authed) > .wrap { display: none; }
 #auth-gate { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 16px;
@@ -259,7 +265,7 @@ body.authed #auth-gate { display: none; }
     <span class="t">The Agent Scorecard — Review</span>
     <span class="count" id="count">0 comments</span>
     <span class="sp"></span>
-    <span id="sync-status" class="sync-status"></span><span id="auth-user" class="auth-user"></span><button id="chpass">Change password</button><button id="signout">Sign out</button>
+    <span id="vernote" class="vernote" hidden></span><select id="ver" title="Book version" hidden></select><span id="sync-status" class="sync-status"></span><span id="auth-user" class="auth-user"></span><button id="chpass">Change password</button><button id="signout">Sign out</button>
     <button id="toggleResolved">Hide resolved</button>
     <button id="copyBtn">Copy all</button>
     
@@ -409,7 +415,8 @@ window.ASR_BOOT=function(){
     const edit=document.createElement('button'); edit.textContent='Edit';
     const res=document.createElement('button'); res.textContent=c.resolved?'Reopen':'Resolve';
     const del=document.createElement('button'); del.className='del'; del.textContent='Delete';
-    meta.appendChild(edit); meta.appendChild(res); meta.appendChild(del);
+    if(!window.ASR_READONLY){ meta.appendChild(edit); meta.appendChild(res); meta.appendChild(del); }
+    else { const rt=document.createElement('span'); rt.className='rtag'+(c.resolved?' on':''); rt.textContent=c.resolved?'Resolved':'Open'; meta.appendChild(rt); }
     card.appendChild(q); card.appendChild(ct); card.appendChild(meta);
     const st=window.ASR_STATUS&&window.ASR_STATUS[c.id];
     if(st&&st.status!=='open'){ const sb=document.createElement('div'); sb.className='authst '+st.status;
@@ -478,6 +485,7 @@ window.ASR_BOOT=function(){
 
   // selection -> compose
   content.addEventListener('mouseup',(e)=>{
+    if(window.ASR_READONLY) return;
     if(e.detail===2) return;   // a double-click is the word-comment gesture (handled on dblclick)
     setTimeout(()=>{
       const sel=window.getSelection();
@@ -520,6 +528,7 @@ window.ASR_BOOT=function(){
   });
   // DOUBLE-click a plain word -> auto-comment "needs work / explain this term"
   content.addEventListener('dblclick',(e)=>{
+    if(window.ASR_READONLY) return;
     if(e.target.closest&&e.target.closest('mark.hl')) return;   // leave existing highlights alone
     if(compose) return;                        // don't hijack an open compose card
     const wr=wordRangeFromPoint(e.clientX,e.clientY);
@@ -666,6 +675,7 @@ window.ASR_BOOT=function(){
   const $ = (id) => document.getElementById(id);
   const gate = $('auth-gate'), form = $('auth-form'), msg = $('auth-msg');
   let mode = 'signin', recovering = /type=recovery/.test(location.hash);
+  let VIEW = C.draft;
   let booted = false, synced = new Map(), timer = null, pending = null, user = null;
 
   function say(text, kind) { msg.textContent = text || ''; msg.className = 'auth-msg ' + (kind || ''); }
@@ -736,9 +746,15 @@ window.ASR_BOOT=function(){
     if (me.error || !me.data.user) { booted = false; await sb.auth.signOut({ scope: 'local' }); gate.classList.remove('loading'); gate.classList.add('ready'); return say('Your session has ended. Please sign in again.', 'err'); }
     user = me.data.user;
     gate.classList.add('loading'); say('Loading the book…');
+    // which version? latest by default, ?v=v37 opens an older one read-only
+    const vers = await sb.from('book_pages').select('draft,published_at').eq('slug', C.slug).order('published_at', { ascending: false });
+    const list = vers.error ? [] : vers.data.map((r) => r.draft);
+    const asked = new URLSearchParams(location.search).get('v');
+    VIEW = asked && list.includes(asked) ? asked : C.draft;
+    const readonly = VIEW !== C.draft;
     const [page, rows] = await Promise.all([
-      sb.from('book_pages').select('html,draft').eq('slug', C.slug).single(),
-      sb.from('review_comments').select('id,data,status,status_note,status_draft').eq('draft', C.draft),
+      sb.from('book_pages').select('html,draft').eq('slug', C.slug).eq('draft', VIEW).single(),
+      sb.from('review_comments').select('id,data,status,status_note,status_draft').eq('draft', VIEW),
     ]);
     if (page.error) { booted = false; gate.classList.remove('loading'); return say('Could not load the book: ' + page.error.message, 'err'); }
     if (rows.error) { booted = false; gate.classList.remove('loading'); return say('Could not load your comments: ' + rows.error.message, 'err'); }
@@ -747,13 +763,16 @@ window.ASR_BOOT=function(){
     // Recover comments that this browser saved locally but never reached the server (e.g. a failed save).
     const server = rows.data.map((r) => r.data), have = new Set(server.map((c) => c.id));
     let local = [];
-    try { local = JSON.parse(localStorage.getItem(user.id + '_asr_comments_' + C.draft) || '[]'); } catch (e) {}
-    const gone = new Set(JSON.parse(localStorage.getItem(user.id + '_asr_deleted_' + C.draft) || '[]'));
-    const recovered = local.filter((c) => c && c.id && typeof c.quote === 'string' && c.sBid && !have.has(c.id) && !gone.has(c.id));
+    try { local = JSON.parse(localStorage.getItem(user.id + '_asr_comments_' + VIEW) || '[]'); } catch (e) {}
+    const gone = new Set(JSON.parse(localStorage.getItem(user.id + '_asr_deleted_' + VIEW) || '[]'));
+    const recovered = readonly ? [] : local.filter((c) => c && c.id && typeof c.quote === 'string' && c.sBid && !have.has(c.id) && !gone.has(c.id));
     window.ASR_INITIAL = server.concat(recovered);
     window.ASR_STATUS = Object.fromEntries(rows.data.map((r) => [r.id, { status: r.status, note: r.status_note, draft: r.status_draft }]));
     rows.data.forEach((r) => synced.set(r.id, JSON.stringify(r.data)));
-    window.ASR_SYNC = queue;
+    window.ASR_READONLY = readonly;
+    window.ASR_SYNC = readonly ? () => {} : queue;
+    document.body.classList.toggle('readonly', readonly);
+    versionMenu(list, readonly);
     $('auth-user').textContent = user.email;
     document.body.classList.add('authed');
     window.ASR_BOOT();
@@ -762,18 +781,28 @@ window.ASR_BOOT=function(){
     if (t) setTimeout(() => t.scrollIntoView({ block: 'start' }), 200);
   }
 
+  function versionMenu(list, readonly) {
+    const sel = $('ver'), note = $('vernote');
+    if (!list.includes(C.draft)) list = [C.draft].concat(list);
+    sel.innerHTML = list.map((d) => `<option value="${d}"${d === VIEW ? ' selected' : ''}>Version ${d}${d === C.draft ? ' (latest)' : ''}</option>`).join('');
+    sel.hidden = false;
+    sel.onchange = () => { const u = new URL(location.href); if (sel.value === C.draft) u.searchParams.delete('v'); else u.searchParams.set('v', sel.value); location.href = u.toString(); };
+    note.hidden = !readonly;
+    if (readonly) { note.textContent = 'Read-only'; note.title = 'Older version: comments are frozen as they were.'; const a = document.createElement('a'); a.href = location.pathname + location.hash; a.textContent = 'Latest →'; note.appendChild(a); }
+  }
+
   // Debounced diff sync: upsert changed comments, delete removed ones.
   function queue(comments) { pending = comments.map((c) => ({ ...c })); clearTimeout(timer); timer = setTimeout(flush, 600); status('Saving…'); }
   async function flush() {
     const list = pending; pending = null; if (!list) return;
     const now = new Map(list.map((c) => [c.id, JSON.stringify(c)]));
     const up = list.filter((c) => synced.get(c.id) !== now.get(c.id))
-      .map((c) => ({ id: c.id, draft: C.draft, data: c, updated_at: new Date().toISOString() }));
+      .map((c) => ({ id: c.id, draft: VIEW, data: c, updated_at: new Date().toISOString() }));
     const gone = [...synced.keys()].filter((id) => !now.has(id));
-    if (gone.length) { try { const k = user.id + '_asr_deleted_' + C.draft; localStorage.setItem(k, JSON.stringify([...new Set(JSON.parse(localStorage.getItem(k) || '[]').concat(gone))])); } catch (e) {} }
+    if (gone.length) { try { const k = user.id + '_asr_deleted_' + VIEW; localStorage.setItem(k, JSON.stringify([...new Set(JSON.parse(localStorage.getItem(k) || '[]').concat(gone))])); } catch (e) {} }
     let err = null;
     if (up.length) { const r = await sb.from('review_comments').upsert(up, { onConflict: 'user_id,id' }); err = err || r.error; }
-    if (gone.length) { const r = await sb.from('review_comments').delete().eq('draft', C.draft).in('id', gone); err = err || r.error; }
+    if (gone.length) { const r = await sb.from('review_comments').delete().eq('draft', VIEW).in('id', gone); err = err || r.error; }
     if (err) { console.error('comment save failed', err); status('⚠ Not saved (will retry): ' + err.message, true); pending = pending || list; clearTimeout(timer); timer = setTimeout(flush, 5000); return; }
     synced = now; status('Saved');
   }
