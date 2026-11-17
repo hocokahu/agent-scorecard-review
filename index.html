@@ -692,7 +692,11 @@ window.ASR_BOOT=function(){
 
   async function start(session) {
     if (!session || booted || recovering) return;
-    user = session.user; booted = true;
+    booted = true;
+    // a saved session can outlive its account (or be revoked): confirm it with the server first
+    const me = await sb.auth.getUser();
+    if (me.error || !me.data.user) { booted = false; await sb.auth.signOut({ scope: 'local' }); gate.classList.remove('loading'); gate.classList.add('ready'); return say('Your session has ended. Please sign in again.', 'err'); }
+    user = me.data.user;
     gate.classList.add('loading'); say('Loading the book…');
     const [page, rows] = await Promise.all([
       sb.from('book_pages').select('html,draft').eq('slug', C.slug).single(),
@@ -702,13 +706,20 @@ window.ASR_BOOT=function(){
     if (rows.error) { booted = false; gate.classList.remove('loading'); return say('Could not load your comments: ' + rows.error.message, 'err'); }
     $('content').innerHTML = page.data.html;
     window.ASR_USER = { id: user.id, email: user.email };
-    window.ASR_INITIAL = rows.data.map((r) => r.data);
+    // Recover comments that this browser saved locally but never reached the server (e.g. a failed save).
+    const server = rows.data.map((r) => r.data), have = new Set(server.map((c) => c.id));
+    let local = [];
+    try { local = JSON.parse(localStorage.getItem(user.id + '_asr_comments_' + C.draft) || '[]'); } catch (e) {}
+    const gone = new Set(JSON.parse(localStorage.getItem(user.id + '_asr_deleted_' + C.draft) || '[]'));
+    const recovered = local.filter((c) => c && c.id && typeof c.quote === 'string' && c.sBid && !have.has(c.id) && !gone.has(c.id));
+    window.ASR_INITIAL = server.concat(recovered);
     window.ASR_STATUS = Object.fromEntries(rows.data.map((r) => [r.id, { status: r.status, note: r.status_note, draft: r.status_draft }]));
     rows.data.forEach((r) => synced.set(r.id, JSON.stringify(r.data)));
     window.ASR_SYNC = queue;
     $('auth-user').textContent = user.email;
     document.body.classList.add('authed');
     window.ASR_BOOT();
+    if (recovered.length) { queue(window.ASR_INITIAL); status('Uploading ' + recovered.length + ' unsaved comment(s)…'); }
     const t = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
     if (t) setTimeout(() => t.scrollIntoView({ block: 'start' }), 200);
   }
@@ -721,10 +732,11 @@ window.ASR_BOOT=function(){
     const up = list.filter((c) => synced.get(c.id) !== now.get(c.id))
       .map((c) => ({ id: c.id, draft: C.draft, data: c, updated_at: new Date().toISOString() }));
     const gone = [...synced.keys()].filter((id) => !now.has(id));
+    if (gone.length) { try { const k = user.id + '_asr_deleted_' + C.draft; localStorage.setItem(k, JSON.stringify([...new Set(JSON.parse(localStorage.getItem(k) || '[]').concat(gone))])); } catch (e) {} }
     let err = null;
     if (up.length) { const r = await sb.from('review_comments').upsert(up, { onConflict: 'user_id,id' }); err = err || r.error; }
     if (gone.length) { const r = await sb.from('review_comments').delete().eq('draft', C.draft).in('id', gone); err = err || r.error; }
-    if (err) { status('Not saved: ' + err.message, true); pending = pending || list; clearTimeout(timer); timer = setTimeout(flush, 5000); return; }
+    if (err) { console.error('comment save failed', err); status('⚠ Not saved (will retry): ' + err.message, true); pending = pending || list; clearTimeout(timer); timer = setTimeout(flush, 5000); return; }
     synced = now; status('Saved');
   }
   function status(t, bad) { const el = $('sync-status'); if (el) { el.textContent = t; el.style.color = bad ? '#b42318' : ''; } }
