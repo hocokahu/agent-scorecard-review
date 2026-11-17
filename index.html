@@ -335,6 +335,30 @@ window.ASR_BOOT=function(){
     }
     return {s,map};
   }
+  const nzq=x=>(x||'').replace(/\s+/g,' ').trim();
+  function anchoredText(c){
+    const sb=blockByBid(c.sBid); if(!sb) return null;
+    const eb=c.eBid?blockByBid(c.eBid):sb; if(!eb) return null;
+    const sp=pointFromGlobal(sb,c.sOff), ep=pointFromGlobal(eb,c.eOff); if(!sp||!ep) return null;
+    try{ const r=document.createRange(); r.setStart(sp.node,sp.offset); r.setEnd(ep.node,ep.offset); return r.toString(); }catch(e){ return null; }
+  }
+  function reanchorAll(list){
+    let changed=false, idx=null;
+    for(const c of list){
+      const q=nzq(c.quote); if(!q) continue;
+      if(nzq(anchoredText(c))===q){ if(c.textChanged){ delete c.textChanged; changed=true; } continue; }
+      idx=idx||buildIndex();
+      let from=0; const ch=nzq(c.chapter); if(ch){ const k=idx.s.indexOf(ch); if(k>=0) from=k; }
+      let i=idx.s.indexOf(q,from); if(i<0) i=idx.s.indexOf(q);
+      const a=i>=0?idx.map[i]:null, z=i>=0?idx.map[i+q.length-1]:null;
+      if(!a||!z){ if(!c.textChanged){ c.textChanged=true; changed=true; } continue; }
+      const sb=blockOf(a[0]), eb=blockOf(z[0]);
+      Object.assign(c,{sBid:sb.dataset.bid,sOff:globalOffset(sb,a[0],a[1]),eBid:(eb!==sb)?eb.dataset.bid:null,eOff:globalOffset(eb,z[0],z[1]+1)});
+      delete c.textChanged; changed=true;
+    }
+    return changed;
+  }
+  window.ASR_APP={reanchor:(list)=>{ const copy=JSON.parse(JSON.stringify(list)); unwrapAll(); assignBids(); reanchorAll(copy); renderAll(); return copy; }};
   function seedComments(){
     if(!SEED.length) return;
     const SK=LS_KEY+'_seeded'; let done=[];
@@ -445,6 +469,7 @@ window.ASR_BOOT=function(){
     else { const rt=document.createElement('span'); rt.className='rtag'+(c.resolved?' on':''); rt.textContent=c.resolved?'Resolved':'Open'; meta.appendChild(rt); }
     card.appendChild(q); card.appendChild(ct); card.appendChild(meta);
     const st=window.ASR_STATUS&&window.ASR_STATUS[c.id];
+    if(c.textChanged){ const tc=document.createElement('div'); tc.className='authst wont_do'; tc.textContent='Text changed since this comment: quote not found'; card.insertBefore(tc,q); }
     if(st&&st.status!=='open'){ const sb=document.createElement('div'); sb.className='authst '+st.status;
       sb.textContent={done:'✓ Done',incorporated:'✓ Incorporated',wont_do:'Not changed'}[st.status]+(st.draft?' in '+st.draft:'')+(st.note?': '+st.note:'');
       card.insertBefore(sb,q); card.classList.add('addressed'); }
@@ -680,7 +705,7 @@ window.ASR_BOOT=function(){
   document.getElementById('clearBtn').addEventListener('click',()=>{ if(confirm('Delete ALL comments? This cannot be undone.')){ comments=[]; save(); renderAll(); } });
 
   window.addEventListener('resize',()=>{ layout(); });
-  load(); assignBids(); seedComments(); renderAll();
+  load(); assignBids(); seedComments(); if(reanchorAll(comments)) save(); renderAll();
   initToc();
   if(document.fonts&&document.fonts.ready){ document.fonts.ready.then(()=>{ renderAll(); barHeightCache=barHeight(); }); }
   window.addEventListener('load',()=>setTimeout(()=>{ renderAll(); barHeightCache=barHeight(); },150));
