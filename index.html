@@ -199,6 +199,30 @@
 .bar .vernote a{color:#262d65;margin-left:4px}
 body.readonly #clearBtn,body.readonly #chpass{display:none}
 .card .meta .rtag{font-weight:600;color:#9a9a9a}.card .meta .rtag.on{color:#1f7a45}
+#tocbtn{display:none;flex-direction:column;justify-content:center;gap:4px;width:36px;height:34px;padding:0 8px;border:1px solid #d5d8e3;background:#fff;cursor:pointer;flex:none}
+#tocbtn span{display:block;height:2px;background:#262d65}
+#tocbtn:hover{background:#f3f5fb}
+@media (max-width:1180px){
+  #tocbtn{display:inline-flex}
+  body.tocopen #toc{display:block;position:fixed;left:0;top:var(--tocTop,52px);bottom:0;width:min(330px,86vw);max-height:none;margin:0;
+    padding:14px 12px 24px 16px;background:#fff;z-index:45;overflow-y:auto;box-shadow:6px 0 28px rgba(20,24,40,.18);border-right:1px solid #e3e5ea}
+  body.tocopen #tocscrim{display:block;position:fixed;left:0;right:0;bottom:0;top:var(--tocTop,52px);background:rgba(20,24,40,.25);z-index:44}
+  .bar{gap:10px}
+  .bar .auth-user{display:none}
+  .bar button{padding-left:10px;padding-right:10px}
+}
+@media (max-width:860px){
+  .bar{gap:8px;padding:8px 10px;flex-wrap:wrap}
+  .bar .t{font-size:14px}
+  .bar .auth-user,#copyBtn,#toggleResolved,#chpass{display:none}
+  .doc{grid-template-columns:minmax(0,1fr)!important;gap:0}
+  .wrap{padding:0 8px}
+  #content{padding:22px 16px;margin:10px 0;border-radius:0}
+  #content pre,#content .sourceCode{overflow-x:auto;max-width:100%}
+  #content svg,#content img,#content figure{max-width:100%;height:auto}
+  #content table{display:block;overflow-x:auto;max-width:100%}
+  #content .hanchor{left:-.8em}
+}
 /* sign-in gate (injected by build/build_site.py) */
 body:not(.authed) > .bar, body:not(.authed) > .wrap { display: none; }
 #auth-gate { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 16px;
@@ -262,6 +286,7 @@ body.authed #auth-gate { display: none; }
 </div>
 
   <div class="bar">
+    <button id="tocbtn" type="button" aria-label="Open contents" aria-expanded="false" aria-controls="toc"><span></span><span></span><span></span></button>
     <span class="t">The Agent Scorecard — Review</span>
     <span class="count" id="count">0 comments</span>
     <span class="sp"></span>
@@ -273,6 +298,7 @@ body.authed #auth-gate { display: none; }
   </div>
   <div class="wrap">
     <div class="doc">
+      <div id="tocscrim" hidden></div>
       <nav id="toc" aria-label="Table of contents"></nav>
       <div id="content"></div>
       <div id="rail"></div>
@@ -660,6 +686,19 @@ window.ASR_BOOT=function(){
   window.addEventListener('load',()=>setTimeout(()=>{ renderAll(); barHeightCache=barHeight(); },150));
 };
 </script>
+<script>
+(function(){
+  const btn=document.getElementById('tocbtn'), toc=document.getElementById('toc'), scrim=document.getElementById('tocscrim');
+  const set=(open)=>{ if(open) document.documentElement.style.setProperty('--tocTop', Math.round(document.querySelector('.bar').getBoundingClientRect().bottom)+'px');
+    document.body.classList.toggle('tocopen',open); btn.setAttribute('aria-expanded',open); btn.setAttribute('aria-label',open?'Close contents':'Open contents');
+    if(open){ const a=toc.querySelector('a.active'); if(a) a.scrollIntoView({block:'center'}); } };
+  btn.addEventListener('click',()=>set(!document.body.classList.contains('tocopen')));
+  scrim.addEventListener('click',()=>set(false));
+  toc.addEventListener('click',(e)=>{ if(e.target.closest('a')) set(false); });           // picking a heading closes it
+  document.addEventListener('keydown',(e)=>{ if(e.key==='Escape') set(false); });
+  matchMedia('(min-width:1181px)').addEventListener('change',(m)=>{ if(m.matches) set(false); });
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script>window.ASR_CONFIG={"url": "https://fnddarcskaxgwibhsxzw.supabase.co", "key": "sb_publishable_HRK9JWJ2iMFHhyBy0wwhIA_AI4C8g6o", "slug": "review", "draft": "v38"};</script>
 <script>
@@ -675,7 +714,7 @@ window.ASR_BOOT=function(){
   const $ = (id) => document.getElementById(id);
   const gate = $('auth-gate'), form = $('auth-form'), msg = $('auth-msg');
   let mode = 'signin', recovering = /type=recovery/.test(location.hash);
-  let VIEW = C.draft;
+  let VIEW = C.draft, VERINFO = {};
   let booted = false, synced = new Map(), timer = null, pending = null, user = null;
 
   function say(text, kind) { msg.textContent = text || ''; msg.className = 'auth-msg ' + (kind || ''); }
@@ -747,8 +786,9 @@ window.ASR_BOOT=function(){
     user = me.data.user;
     gate.classList.add('loading'); say('Loading the book…');
     // which version? latest by default, ?v=v37 opens an older one read-only
-    const vers = await sb.from('book_pages').select('draft,published_at').eq('slug', C.slug).order('published_at', { ascending: false });
+    const vers = await sb.from('book_pages').select('draft,published_at,summary').eq('slug', C.slug).order('published_at', { ascending: false });
     const list = vers.error ? [] : vers.data.map((r) => r.draft);
+    VERINFO = vers.error ? {} : Object.fromEntries(vers.data.map((r) => [r.draft, r]));
     const asked = new URLSearchParams(location.search).get('v');
     VIEW = asked && list.includes(asked) ? asked : C.draft;
     const readonly = VIEW !== C.draft;
@@ -784,7 +824,7 @@ window.ASR_BOOT=function(){
   function versionMenu(list, readonly) {
     const sel = $('ver'), note = $('vernote');
     if (!list.includes(C.draft)) list = [C.draft].concat(list);
-    sel.innerHTML = list.map((d) => `<option value="${d}"${d === VIEW ? ' selected' : ''}>Version ${d}${d === C.draft ? ' (latest)' : ''}</option>`).join('');
+    sel.innerHTML = list.map((d) => `<option value="${d}"${d === VIEW ? ' selected' : ''} title="${((VERINFO[d] || {}).summary || '').replace(/"/g, '&quot;')}">Version ${d}${d === C.draft ? ' (latest)' : ''}</option>`).join('');
     sel.hidden = false;
     sel.onchange = () => { const u = new URL(location.href); if (sel.value === C.draft) u.searchParams.delete('v'); else u.searchParams.set('v', sel.value); location.href = u.toString(); };
     note.hidden = !readonly;
