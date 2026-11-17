@@ -214,6 +214,11 @@ body.authed #auth-gate { display: none; }
   #auth-gate .auth-sub, #auth-gate label { color: #b5bac5; }
   #auth-gate input { background: #14161b; color: #e7e9ee; border-color: #2b2f39; }
 }
+#auth-tabs { display: flex; margin: 0 0 16px; border-bottom: 1px solid #dcdfe8; }
+#auth-gate #auth-tabs button { width: auto; flex: 1; background: none; color: #666; padding: 8px 4px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+#auth-gate #auth-tabs button.on { color: #262d65; border-bottom-color: #262d65; }
+#auth-gate .auth-link { display: inline-block; margin-top: 10px; font-size: 13.5px; color: #262d65; }
+#auth-gate [hidden] { display: none !important; }
 
 </style>
 </head>
@@ -222,18 +227,20 @@ body.authed #auth-gate { display: none; }
   <div class="auth-card">
     <img src="images/book-cover.png" alt="" class="auth-cover">
     <h1 id="auth-title">The Agent Scorecard</h1>
-    <p class="auth-sub">Review copy. Sign in with your email to read the draft and keep your comments.</p>
+    <p class="auth-sub" id="auth-title-sub"></p>
+    <div id="auth-tabs" role="tablist"><button type="button" data-mode="signin">Sign in</button><button type="button" data-mode="signup">Create account</button></div>
     <form id="auth-form">
-      <label for="auth-email">Email</label>
-      <input id="auth-email" type="email" autocomplete="email" required placeholder="you@example.com">
-      <button id="auth-send" type="submit">Email me a sign-in link</button>
+      <div id="auth-email-row"><label for="auth-email">Email</label>
+      <input id="auth-email" type="email" autocomplete="email" required placeholder="you@example.com"></div>
+      <div id="auth-pass-row"><label for="auth-pass">Password</label>
+      <input id="auth-pass" type="password" minlength="8"></div>
+      <div id="auth-pass2-row" hidden><label for="auth-pass2">Confirm password</label>
+      <input id="auth-pass2" type="password" autocomplete="new-password" minlength="8"></div>
+      <button id="auth-submit" type="submit">Sign in</button>
     </form>
-    <div id="auth-code-row" hidden>
-      <label for="auth-code">6-digit code (if your email shows one)</label>
-      <div class="auth-code-line"><input id="auth-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10"><button id="auth-verify" type="button">Verify</button></div>
-    </div>
+    <a href="#" id="auth-forgot" class="auth-link">Forgot password?</a>
     <p id="auth-msg" class="auth-msg" aria-live="polite"></p>
-    <p class="auth-fine">No password. Your comments are saved to your email's account, so you see them again next time.</p>
+    <p class="auth-fine">Your comments are saved to your account, so you see them again from any browser.</p>
   </div>
 </div>
 
@@ -602,7 +609,7 @@ window.ASR_BOOT=function(){
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script>window.ASR_CONFIG={"url": "https://fnddarcskaxgwibhsxzw.supabase.co", "key": "sb_publishable_HRK9JWJ2iMFHhyBy0wwhIA_AI4C8g6o", "slug": "review", "draft": "v38"};</script>
 <script>
-/* The Agent Scorecard review site: passwordless sign-in (Supabase magic link or 6-digit code),
+/* The Agent Scorecard review site: email + password sign-in (Supabase Auth, no confirmation email),
    book HTML loaded only after sign-in (RLS: authenticated), and per-user comments synced to Supabase.
    Expects window.ASR_CONFIG = {url, key, slug, draft} and window.ASR_BOOT (the page's comment app). */
 (function () {
@@ -612,33 +619,63 @@ window.ASR_BOOT=function(){
   });
   window.ASR_SB = sb; // handy for debugging / tests
   const $ = (id) => document.getElementById(id);
-  const gate = $('auth-gate'), form = $('auth-form'), msg = $('auth-msg'), codeRow = $('auth-code-row');
+  const gate = $('auth-gate'), form = $('auth-form'), msg = $('auth-msg');
+  let mode = 'signin', recovering = /type=recovery/.test(location.hash);
   let booted = false, synced = new Map(), timer = null, pending = null, user = null;
 
   function say(text, kind) { msg.textContent = text || ''; msg.className = 'auth-msg ' + (kind || ''); }
   function redirectTo() { return location.origin + location.pathname; }
+  const LABEL = { signin: 'Sign in', signup: 'Create account', reset: 'Email me a reset link', newpass: 'Save new password' };
+
+  function setMode(m) {
+    mode = m; say('');
+    document.querySelectorAll('#auth-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.mode === m));
+    $('auth-tabs').hidden = m === 'newpass';
+    $('auth-email-row').hidden = m === 'newpass';
+    $('auth-pass-row').hidden = m === 'reset';
+    $('auth-pass2-row').hidden = !(m === 'signup' || m === 'newpass');
+    $('auth-pass').autocomplete = m === 'signin' ? 'current-password' : 'new-password';
+    $('auth-pass').placeholder = m === 'signin' ? '' : 'At least 8 characters';
+    $('auth-submit').textContent = LABEL[m];
+    $('auth-forgot').hidden = m !== 'signin';
+    $('auth-title-sub').textContent = m === 'signup' ? 'Create an account with your email and a password. Your comments are saved to it.'
+      : m === 'reset' ? 'Enter your email and we will send a link to set a new password.'
+      : m === 'newpass' ? 'Choose a new password for your account.'
+      : 'Review copy. Sign in to read the draft and see your comments.';
+  }
+  document.querySelectorAll('#auth-tabs button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+  $('auth-forgot').addEventListener('click', (e) => { e.preventDefault(); setMode('reset'); });
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const email = $('auth-email').value.trim();
-    if (!email) return;
-    $('auth-send').disabled = true; say('Sending…');
-    const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo(), shouldCreateUser: true } });
-    $('auth-send').disabled = false;
-    if (error) return say(error.message, 'err');
-    say('Check ' + email + ' for a sign-in link. If the email shows a 6-digit code, type it below.', 'ok');
-    codeRow.hidden = false; $('auth-code').focus();
+    const email = $('auth-email').value.trim(), password = $('auth-pass').value, password2 = $('auth-pass2').value;
+    if ((mode === 'signup' || mode === 'newpass') && password !== password2) return say('The two passwords do not match.', 'err');
+    $('auth-submit').disabled = true; say(mode === 'reset' ? 'Sending…' : 'Working…');
+    let error = null;
+    if (mode === 'signin') ({ error } = await sb.auth.signInWithPassword({ email, password }));
+    else if (mode === 'signup') {
+      const r = await sb.auth.signUp({ email, password, options: { emailRedirectTo: redirectTo() } });
+      error = r.error;
+      // Supabase hides whether an email is taken: no error and no session means the account already exists.
+      if (!error && !r.data.session) error = { message: 'An account with this email already exists. Sign in, or use "Forgot password".' };
+    } else if (mode === 'reset') {
+      ({ error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: redirectTo() }));
+      if (!error) say('If that email has an account, a reset link is on its way. Open it in this browser.', 'ok');
+    } else if (mode === 'newpass') {
+      ({ error } = await sb.auth.updateUser({ password }));
+      if (!error) { recovering = false; const { data } = await sb.auth.getSession(); start(data.session); }
+    }
+    $('auth-submit').disabled = false;
+    if (error) say(friendly(error.message), 'err');
   });
-  $('auth-verify').addEventListener('click', async () => {
-    const email = $('auth-email').value.trim(), token = $('auth-code').value.trim();
-    if (!email || !token) return;
-    say('Checking code…');
-    const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
-    if (error) say(error.message, 'err');
-  });
+  function friendly(m) {
+    if (/invalid login credentials/i.test(m)) return 'Wrong email or password. New here? Use "Create account".';
+    if (/rate limit/i.test(m)) return 'Too many emails sent in the last hour. Please try again later.';
+    return m;
+  }
 
   async function start(session) {
-    if (!session || booted) return;
+    if (!session || booted || recovering) return;
     user = session.user; booted = true;
     gate.classList.add('loading'); say('Loading the book…');
     const [page, rows] = await Promise.all([
@@ -683,9 +720,11 @@ window.ASR_BOOT=function(){
   });
 
   sb.auth.onAuthStateChange((event, session) => {
+    if (event === 'PASSWORD_RECOVERY') { recovering = true; setMode('newpass'); return; }
     if (session) start(session);
     else if (booted) location.replace(redirectTo());
   });
+  setMode(recovering ? 'newpass' : 'signin');
   sb.auth.getSession().then(({ data }) => { if (data.session) start(data.session); else gate.classList.add('ready'); });
 })();
 </script>
