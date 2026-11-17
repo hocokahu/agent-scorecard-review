@@ -663,7 +663,7 @@ window.ASR_BOOT=function(){
       if (!error) say('If that email has an account, a reset link is on its way. Open it in this browser.', 'ok');
     } else if (mode === 'newpass') {
       ({ error } = await sb.auth.updateUser({ password }));
-      if (!error) { recovering = false; const { data } = await sb.auth.getSession(); start(data.session); }
+      if (!error) { await sb.auth.signOut({ scope: 'others' }); recovering = false; const { data } = await sb.auth.getSession(); start(data.session); }
     }
     $('auth-submit').disabled = false;
     if (error) say(friendly(error.message), 'err');
