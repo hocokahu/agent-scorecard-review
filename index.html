@@ -568,7 +568,7 @@ window.ASR_BOOT=function(){
     if(compose){ const cc=buildCompose(); rail.appendChild(cc); const h=120; let top=Math.max(compose.top,cursor-9999<0?compose.top:compose.top); cc.style.top=Math.max(compose.top,0)+'px'; cc.querySelector('textarea').focus(); }
     rail.style.height=Math.max(content.offsetHeight,cursor+140)+'px';
   }
-  function renderAll(){ unwrapAll(); assignBids(); rewrap(); layout(); countEl.textContent=comments.length+(comments.length===1?' comment':' comments'); }
+  function renderAll(){ unwrapAll(); assignBids(); rewrap(); layout(); if(window.ASR_COUNT) window.ASR_COUNT(comments.length); else countEl.textContent=comments.length+(comments.length===1?' comment':' comments'); }
 
   function focusComment(id,scroll){
     activeId=id;
@@ -924,10 +924,21 @@ window.ASR_BOOT=function(){
     const c = {};
     r.data.forEach((x) => { (c[x.draft] = c[x.draft] || []).push(x); });
     Object.values(c).forEach((a) => a.sort((p, q) => (q.is_me - p.is_me) || (q.total - p.total) || p.reviewer.localeCompare(q.reviewer)));
-    COUNTS = c; renderBtn();
+    COUNTS = c; renderBtn(); if (window.ASR_COUNT) window.ASR_COUNT();
     const pop = document.querySelector('#ver .vm-pop'); if (pop && !pop.hidden) renderPop();
   }
   const sum = (d, k) => (COUNTS[d] || []).reduce((n, x) => n + x[k], 0);
+  // Top-bar count: everyone's comments on this version. Mine come from the page (instant), others from the server.
+  let MINE = null;
+  window.ASR_COUNT = (mine) => {
+    if (typeof mine === 'number') MINE = mine;
+    const el = $('count'); if (!el || MINE == null) return;
+    const people = COUNTS[VIEW] || [];
+    const others = people.filter((p) => !p.is_me), oth = others.reduce((n, p) => n + p.total, 0);
+    const all = MINE + oth, who = others.length + (MINE ? 1 : 0);
+    el.textContent = all + (all === 1 ? ' comment' : ' comments') + (who > 1 || (who === 1 && !MINE) ? ` · ${who} ${who === 1 ? 'person' : 'people'}` : '');
+    el.title = (MINE ? `Yours: ${MINE}` : 'Yours: 0') + (others.length ? '\n' + others.map((p) => `${p.reviewer}: ${p.total}${p.open ? ` (${p.open} open)` : ''}`).join('\n') : '') + '\nOnly your own comments show in the margin.';
+  };
   function renderBtn() {
     const b = document.querySelector('#ver .vm-btn'); if (!b) return;
     b.querySelector('.vm-cur').textContent = 'Version ' + VIEW + (VIEW === C.draft ? ' (latest)' : '');
