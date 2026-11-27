@@ -231,6 +231,30 @@ body.readonly #clearBtn,body.readonly #chpass{display:none}
   #content table{display:block;overflow-x:auto;max-width:100%}
   #content .hanchor{left:-.8em}
 }
+.card .cacts{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
+.card .cacts button{font:600 13px var(--sans);border-radius:7px;padding:7px 12px;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--ink)}
+.card .cacts .csave{background:var(--accent);border-color:var(--accent);color:#fff}
+#msheet,#mcbtn{display:none}
+@media (max-width:860px){
+  #mcbtn:not([hidden]){display:block;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom));z-index:70;
+    font:700 15px var(--sans);color:#fff;background:var(--accent);border:none;border-radius:999px;padding:12px 20px;box-shadow:0 6px 22px rgba(20,24,40,.3)}
+  #msheet.open{display:block;position:fixed;left:0;right:0;bottom:0;z-index:65;background:#fff;border-top:1px solid var(--line);border-radius:14px 14px 0 0;
+    box-shadow:0 -8px 30px rgba(20,24,40,.18);padding:10px 14px calc(14px + env(safe-area-inset-bottom));max-height:72vh;overflow-y:auto;font-family:var(--sans)}
+  #msheet .mshead{display:flex;align-items:center;justify-content:space-between;margin:0 0 8px;font-size:14px;color:var(--accent)}
+  #msheet .msx{border:none;background:#f1f2f6;border-radius:999px;width:32px;height:32px;font-size:15px;cursor:pointer;color:#444}
+  #msheet .card{position:static;max-width:none;width:100%;box-shadow:none;margin:0 0 10px}
+  #msheet .card.compose{border:none;padding:0}
+  #msheet textarea{font-size:16px;min-height:96px}
+  #msheet .khint{display:none}
+  #msheet .react button{font-size:14px;padding:9px 12px}
+  #msheet .card .meta button{font-size:13px;padding:6px 8px}
+  #msheet .msempty{color:var(--muted);font-size:14px}
+  .bar .count{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+  #clearBtn{display:none}
+  #mcbtn:not([hidden]){white-space:nowrap}
+  #content p,#content li,#content td,#content th{overflow-wrap:anywhere}
+  #content p code,#content li code,#content td code{overflow-wrap:anywhere;word-break:break-word;white-space:normal}
+}
 /* sign-in gate (injected by build/build_site.py) */
 body:not(.authed) > .bar, body:not(.authed) > .wrap { display: none; }
 #auth-gate { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 16px;
@@ -361,6 +385,7 @@ window.ASR_BOOT=function(){
   const DRAFT='v40';
   const DOWN_DEFAULT='This makes no sense, elaborate more with context and background. Make it easier to read, dont assume anything.';
   const content=document.getElementById('content');
+  const narrow=()=>window.matchMedia('(max-width:860px)').matches;
   const rail=document.getElementById('rail');
   const countEl=document.getElementById('count');
   let comments=[]; let compose=null; let activeId=null; let hideResolved=false;
@@ -547,6 +572,12 @@ window.ASR_BOOT=function(){
     react.appendChild(up); react.appendChild(down);
     const kh=document.createElement('div'); kh.className='khint'; kh.textContent='Enter to save · Shift+Enter new line · Esc to cancel';
     card.appendChild(q); card.appendChild(ta); card.appendChild(react); card.appendChild(kh);
+    const acts=document.createElement('div'); acts.className='cacts';
+    const cb=document.createElement('button'); cb.type='button'; cb.className='ccancel'; cb.textContent='Cancel';
+    const sb=document.createElement('button'); sb.type='button'; sb.className='csave'; sb.textContent='Save comment';
+    acts.appendChild(cb); acts.appendChild(sb); card.appendChild(acts);
+    cb.addEventListener('mousedown',(e)=>{ e.preventDefault(); cancelCompose(); });
+    sb.addEventListener('mousedown',(e)=>{ e.preventDefault(); const t=ta.value.trim(); if(!t){ ta.focus(); return; } saveCompose(t); });
     // mousedown+preventDefault so clicking a button does not blur-cancel the empty textarea
     up.addEventListener('mousedown',(e)=>{ e.preventDefault(); saveCompose('Explore deeper later.','up'); });
     down.addEventListener('mousedown',(e)=>{ e.preventDefault(); compose.sentiment='down'; ta.value=DOWN_DEFAULT; ta.focus(); ta.setSelectionRange(ta.value.length,ta.value.length); });
@@ -554,7 +585,7 @@ window.ASR_BOOT=function(){
       if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); const t=ta.value.trim(); if(!t){ cancelCompose(); return; } saveCompose(t); }
       else if(e.key==='Escape'){ e.preventDefault(); cancelCompose(); }
     });
-    ta.addEventListener('blur',()=>{ setTimeout(()=>{ if(compose && !ta.value.trim()){ cancelCompose(); } },120); });
+    ta.addEventListener('blur',()=>{ setTimeout(()=>{ if(compose && !narrow() && !ta.value.trim()){ cancelCompose(); } },120); });
     return card;
   }
   function saveCompose(text,sentiment){
@@ -564,6 +595,8 @@ window.ASR_BOOT=function(){
   function cancelCompose(){ compose=null; renderAll(); }
 
   function layout(){
+    if(narrow()){ rail.innerHTML=''; renderSheet(); return; }
+    if(msheet) msheet.classList.remove('open');
     rail.innerHTML='';
     const cRect=content.getBoundingClientRect();
     const items=comments.filter(c=>!(hideResolved&&c.resolved)).map(c=>{
@@ -588,6 +621,7 @@ window.ASR_BOOT=function(){
   // selection -> compose
   content.addEventListener('mouseup',(e)=>{
     if(window.ASR_READONLY) return;
+    if(narrow()) return;
     if(e.detail===2) return;   // a double-click is the word-comment gesture (handled on dblclick)
     setTimeout(()=>{
       const sel=window.getSelection();
@@ -755,6 +789,61 @@ window.ASR_BOOT=function(){
   document.getElementById('toggleResolved').addEventListener('click',(e)=>{ hideResolved=!hideResolved; e.target.textContent=hideResolved?'Show resolved':'Hide resolved'; renderAll(); });
   document.getElementById('clearBtn').addEventListener('click',()=>{ if(confirm('Delete ALL comments? This cannot be undone.')){ comments=[]; save(); renderAll(); } });
 
+  // ---- phones: touch selection -> Comment button -> bottom sheet ----
+  const msheet=document.createElement('div'); msheet.id='msheet'; msheet.setAttribute('role','dialog'); msheet.setAttribute('aria-label','Comment');
+  const mcbtn=document.createElement('button'); mcbtn.id='mcbtn'; mcbtn.type='button'; mcbtn.textContent='💬 Comment on selection'; mcbtn.hidden=true;
+  document.body.appendChild(msheet); document.body.appendChild(mcbtn);
+  let msel=null, mselT=null, listMode=false;
+  function selToCompose(){
+    const sel=window.getSelection();
+    if(!sel||sel.isCollapsed||!sel.rangeCount) return null;
+    const range=sel.getRangeAt(0);
+    if(!content.contains(range.commonAncestorContainer)) return null;
+    const quote=sel.toString().replace(/\s+/g,' ').trim(); if(quote.length<2) return null;
+    const sBlock=blockOf(range.startContainer), eBlock=blockOf(range.endContainer); if(!sBlock) return null;
+    return {sBid:sBlock.dataset.bid,sOff:globalOffset(sBlock,range.startContainer,range.startOffset),
+      eBid:(eBlock&&eBlock!==sBlock)?eBlock.dataset.bid:null,eOff:globalOffset(eBlock||sBlock,range.endContainer,range.endOffset),
+      quote:sel.toString().trim(),chapter:chapterOf(sBlock),top:0,sentiment:null};
+  }
+  document.addEventListener('selectionchange',()=>{
+    if(!narrow()||window.ASR_READONLY||compose) return;
+    clearTimeout(mselT);
+    mselT=setTimeout(()=>{ msel=selToCompose(); mcbtn.hidden=!msel; },200);
+  });
+  const openCompose=(e)=>{ if(e) e.preventDefault(); const c=msel||selToCompose(); if(!c) return;
+    compose=c; msel=null; mcbtn.hidden=true; activeId=null; listMode=false;
+    const sel=window.getSelection(); if(sel) sel.removeAllRanges(); renderAll(); };
+  mcbtn.addEventListener('pointerdown',(e)=>e.preventDefault());
+  mcbtn.addEventListener('click',openCompose);
+  function sheetHead(title){
+    const h=document.createElement('div'); h.className='mshead';
+    const t=document.createElement('b'); t.textContent=title;
+    const x=document.createElement('button'); x.type='button'; x.className='msx'; x.setAttribute('aria-label','Close'); x.textContent='✕';
+    x.addEventListener('mousedown',(e)=>{ e.preventDefault(); if(compose){ cancelCompose(); return; } activeId=null; listMode=false;
+      content.querySelectorAll('mark.hl.active').forEach(m=>m.classList.remove('active')); renderSheet(); });
+    h.appendChild(t); h.appendChild(x); return h;
+  }
+  function renderSheet(){
+    msheet.innerHTML='';
+    if(compose){
+      msheet.appendChild(sheetHead('New comment'));
+      const cc=buildCompose(); msheet.appendChild(cc); msheet.classList.add('open');
+      const ta=cc.querySelector('textarea'); setTimeout(()=>ta.focus(),60); return;
+    }
+    const c=activeId&&comments.find(x=>x.id===activeId);
+    if(c){ msheet.appendChild(sheetHead('Comment')); msheet.appendChild(buildCard(c)); msheet.classList.add('open'); return; }
+    if(listMode){
+      const vis=comments.filter(x=>!(hideResolved&&x.resolved));
+      msheet.appendChild(sheetHead(vis.length+(vis.length===1?' comment':' comments')));
+      if(!vis.length){ const p=document.createElement('p'); p.className='msempty'; p.textContent='No comments yet. Select some text in the book, then tap "Comment on selection".'; msheet.appendChild(p); }
+      vis.forEach(x=>{ const card=buildCard(x); card.addEventListener('click',(e)=>{ if(e.target.tagName==='BUTTON') return; listMode=false; focusComment(x.id,true); }); msheet.appendChild(card); });
+      msheet.classList.add('open'); return;
+    }
+    msheet.classList.remove('open');
+  }
+  countEl.addEventListener('click',()=>{ if(!narrow()) return; activeId=null; listMode=!listMode; renderSheet(); });
+  if(window.visualViewport){ const vv=window.visualViewport; const fit=()=>{ const kb=Math.max(0,window.innerHeight-vv.height-vv.offsetTop); msheet.style.bottom=kb+'px'; mcbtn.style.marginBottom=kb+'px'; };
+    vv.addEventListener('resize',fit); vv.addEventListener('scroll',fit); }
   window.addEventListener('resize',()=>{ layout(); });
   load(); assignBids(); seedComments(); if(reanchorAll(comments)) save(); renderAll();
   initToc();
